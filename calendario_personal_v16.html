@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M&L Planner v21.8 - Dual Check</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .calendar-row { display: grid; grid-template-columns: 20px 20px repeat(7, 1fr); gap: 2px; align-items: center; margin-bottom: 2px; }
+        .day-cell { 
+            height: 38px; border: 1px solid #e2e8f0; cursor: pointer; border-radius: 6px; 
+            display: flex; align-items: center; justify-content: center; 
+            font-size: 0.7rem; font-weight: 800; position: relative; overflow: hidden;
+            transition: transform 0.1s; background: white;
+        }
+        .is-holiday { outline: 3px solid #f472b6 !important; outline-offset: -3px; z-index: 5; }
+        .weekend-text { color: #ef4444; }
+        .week-check { height: 14px; width: 14px; border-radius: 3px; cursor: pointer; border: 2px solid #cbd5e1; transition: 0.2s; }
+        .check-ml.selected { background-color: #4ade80; border-color: #4ade80; box-shadow: 0 0 5px #4ade80; }
+        .check-sch.selected { background-color: #60a5fa; border-color: #60a5fa; box-shadow: 0 0 5px #60a5fa; }
+        .is-offfriday { box-shadow: inset 0 0 0 3px #a855f7; }
+        .modal { display: none; }
+    </style>
+</head>
+<body class="bg-slate-50 p-2 text-slate-800 font-sans">
+    <div class="max-w-[1550px] mx-auto bg-white rounded-2xl shadow-2xl p-4">
+        <header class="mb-4 flex flex-col xl:flex-row justify-between items-center gap-4 border-b pb-4">
+            <div>
+                <h1 class="text-xl font-black text-slate-900 tracking-tighter uppercase leading-none">Planner Sevilla 2026</h1>
+                <div class="flex flex-wrap gap-2 mt-2">
+                    <span id="count-work" class="bg-orange-100 text-orange-600 text-[9px] px-2 py-1 rounded-md font-bold border border-orange-200 uppercase">Juanan: 0d</span>
+                    <span id="count-ml" class="bg-green-100 text-green-600 text-[9px] px-2 py-1 rounded-md font-bold border border-green-200 uppercase">M&L: 0d</span>
+                    <span id="count-sch" class="bg-blue-100 text-blue-600 text-[9px] px-2 py-1 rounded-md font-bold border border-blue-200 uppercase">Escolar: 0d</span>
+                </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <label class="bg-emerald-600 text-white text-[9px] px-3 py-2 rounded-lg font-black uppercase shadow-md cursor-pointer">
+                    Importar .ics
+                    <input type="file" id="ics-upload" class="hidden" accept=".ics">
+                </label>
+                <button onclick="openSync()" class="bg-slate-800 text-white text-[9px] px-3 py-2 rounded-lg font-black uppercase shadow-md">Backup Estado</button>
+                <button onclick="generateWorkReport()" class="bg-orange-500 text-white text-[9px] px-3 py-2 rounded-lg font-black uppercase shadow-md">Informe Vacaciones</button>
+            </div>
+        </header>
+
+        <div class="flex flex-wrap justify-center gap-2 mb-6 p-2 bg-slate-900 rounded-xl shadow-inner">
+            <button onclick="setBrush('martinLuca')" id="btn-martinLuca" class="brush-btn px-4 py-2 rounded-lg bg-green-400 text-white text-[9px] font-black ring-2 ring-white">M&L</button>
+            <button onclick="setBrush('schoolVacations')" id="btn-schoolVacations" class="brush-btn px-4 py-2 rounded-lg bg-blue-400 text-white text-[9px] font-black opacity-40">Escolar</button>
+            <button onclick="setBrush('workVacations')" id="btn-workVacations" class="brush-btn px-4 py-2 rounded-lg bg-orange-400 text-white text-[9px] font-black opacity-40">Juanan</button>
+            <button onclick="setBrush('holiday')" id="btn-holiday" class="brush-btn px-4 py-2 rounded-lg border-2 border-pink-400 text-pink-400 text-[9px] font-black opacity-40">Festivo</button>
+            <button onclick="setBrush('clear')" id="btn-clear" class="brush-btn px-4 py-2 rounded-lg bg-slate-500 text-white text-[9px] font-black opacity-40">Borrador</button>
+        </div>
+
+        <div id="calendar-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-4"></div>
+    </div>
+
+    <div id="modal-box" class="modal fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 backdrop-blur-md">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-8 shadow-2xl border-t-8 border-indigo-500">
+            <h2 id="modal-title" class="text-2xl font-black mb-2 uppercase text-slate-800 tracking-tighter italic">Título</h2>
+            <textarea id="modal-text" class="w-full h-64 p-4 border-2 border-slate-100 rounded-xl bg-slate-50 text-[10px] font-mono mb-4 outline-none"></textarea>
+            <button id="btn-copy" onclick="copyModalText()" class="w-full bg-slate-900 text-white py-4 rounded-xl font-black text-xs uppercase shadow-lg mb-2">Copiar Contenido</button>
+            <button id="btn-import" onclick="applySync()" class="hidden w-full bg-green-500 text-white py-4 rounded-xl font-black text-xs uppercase shadow-lg mb-2">Confirmar Importación</button>
+            <button onclick="closeModal()" class="w-full text-slate-400 text-[10px] font-black uppercase text-center mt-2">Cerrar Ventana</button>
+        </div>
+    </div>
+
+    <script>
+        let currentBrush = 'martinLuca';
+        const colors = { martinLuca: '#4ade80', schoolVacations: '#60a5fa', workVacations: '#fb923c', holiday: '#f472b6' };
+        
+        const sevilleHolidays = {
+            "2026-0-1":["holiday"],"2026-0-6":["holiday"],"2026-1-28":["holiday"],"2026-3-2":["holiday"],"2026-3-3":["holiday"],"2026-3-22":["holiday"],"2026-4-1":["holiday"],"2026-5-4":["holiday"],"2026-7-15":["holiday"],"2026-9-12":["holiday"],"2026-10-2":["holiday"],"2026-11-7":["holiday"],"2026-11-8":["holiday"],"2026-11-25":["holiday"]
+        };
+
+        let calendarData = JSON.parse(localStorage.getItem('ml_planner_v21_8')) || { events: sevilleHolidays };
+
+        function setBrush(type) {
+            currentBrush = type;
+            document.querySelectorAll('.brush-btn').forEach(btn => btn.classList.add('opacity-40', 'ring-0'));
+            document.getElementById('btn-' + type).classList.remove('opacity-40');
+            if(type !== 'clear') document.getElementById('btn-' + type).classList.add('ring-2', 'ring-white');
+        }
+
+        function toggleDay(id) {
+            if (!calendarData.events[id]) calendarData.events[id] = [];
+            if (currentBrush === 'clear') calendarData.events[id] = [];
+            else {
+                const idx = calendarData.events[id].indexOf(currentBrush);
+                if (idx > -1) calendarData.events[id].splice(idx, 1);
+                else calendarData.events[id].push(currentBrush);
+            }
+            save();
+        }
+
+        function toggleFullWeek(ids, type) {
+            const allSel = ids.every(id => calendarData.events[id]?.includes(type));
+            ids.forEach(id => {
+                if (!calendarData.events[id]) calendarData.events[id] = [];
+                const idx = calendarData.events[id].indexOf(type);
+                if (allSel) { if (idx > -1) calendarData.events[id].splice(idx, 1); }
+                else { if (idx === -1) calendarData.events[id].push(type); }
+            });
+            save();
+        }
+
+        function save() {
+            localStorage.setItem('ml_planner_v21_8', JSON.stringify(calendarData));
+            updateStats();
+            render();
+        }
+
+        function updateStats() {
+            let counts = { martinLuca: 0, schoolVacations: 0, workVacations: 0 };
+            Object.values(calendarData.events).forEach(evs => {
+                if(evs.includes('martinLuca')) counts.martinLuca++;
+                if(evs.includes('schoolVacations')) counts.schoolVacations++;
+                if(evs.includes('workVacations')) counts.workVacations++;
+            });
+            document.getElementById('count-work').innerText = `Juanan: ${counts.workVacations}d`;
+            document.getElementById('count-ml').innerText = `M&L: ${counts.martinLuca}d`;
+            document.getElementById('count-sch').innerText = `Escolar: ${counts.schoolVacations}d`;
+        }
+
+        function render() {
+            const container = document.getElementById('calendar-grid');
+            container.innerHTML = '';
+            const months = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+            for (let m = 0; m < 15; m++) {
+                const year = m < 12 ? 2026 : 2027;
+                const monthIdx = m % 12;
+                const firstDay = new Date(year, monthIdx, 1);
+                let html = `<div class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                    <h3 class="text-center font-black capitalize mb-3 text-slate-700 text-[10px] border-b pb-2 tracking-tighter">${months[monthIdx]} ${year}</h3>
+                    <div class="calendar-row text-[8px] text-slate-300 font-bold text-center mb-1">
+                        <div></div><div></div><div>L</div><div>M</div><div>X</div><div>J</div><div>V</div><div>S</div><div>D</div>
+                    </div>`;
+
+                const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
+                const offset = (firstDay.getDay() || 7) - 1;
+                let currentDay = 1;
+
+                for (let w = 0; w < 6; w++) {
+                    if (currentDay > daysInMonth) break;
+                    let weekHtml = `<div class="calendar-row">`;
+                    let weekIds = [];
+                    let holidayInWeek = false;
+
+                    for(let d=0; d<7; d++) {
+                        let dNum = w * 7 + d - offset + 1;
+                        if(dNum > 0 && dNum <= daysInMonth) {
+                            const tid = `${year}-${monthIdx}-${dNum}`;
+                            weekIds.push(tid);
+                            if (d < 4 && calendarData.events[tid]?.includes('holiday')) holidayInWeek = true;
+                        }
+                    }
+
+                    const isML = weekIds.length > 0 && weekIds.every(id => calendarData.events[id]?.includes('martinLuca'));
+                    const isSCH = weekIds.length > 0 && weekIds.every(id => calendarData.events[id]?.includes('schoolVacations'));
+
+                    weekHtml += `<div onclick="toggleFullWeek(${JSON.stringify(weekIds).replace(/"/g, "'")}, 'martinLuca')" class="week-check check-ml ${isML?'selected':''}"></div>`;
+                    weekHtml += `<div onclick="toggleFullWeek(${JSON.stringify(weekIds).replace(/"/g, "'")}, 'schoolVacations')" class="week-check check-sch ${isSCH?'selected':''}"></div>`;
+
+                    for (let d = 0; d < 7; d++) {
+                        const cellDay = w * 7 + d - offset + 1;
+                        if (cellDay <= 0 || cellDay > daysInMonth) {
+                            weekHtml += `<div></div>`;
+                        } else {
+                            const id = `${year}-${monthIdx}-${cellDay}`;
+                            const evs = calendarData.events[id] || [];
+                            const isHol = evs.includes('holiday');
+                            const isOff = d === 4 && !holidayInWeek && !isHol;
+                            const colorEvs = evs.filter(e => e !== 'holiday');
+                            
+                            let background = 'white';
+                            if (colorEvs.length === 1) background = colors[colorEvs[0]];
+                            else if (colorEvs.length > 1) {
+                                const step = 100 / colorEvs.length;
+                                background = `linear-gradient(135deg, ${colorEvs.map((c, i) => `${colors[c]} ${i*step}%, ${colors[c]} ${(i+1)*step}%`).join(', ')})`;
+                            }
+
+                            weekHtml += `<div onclick="toggleDay('${id}')" 
+                                class="day-cell ${isHol?'is-holiday':''} ${isOff?'is-offfriday':''} ${d>=5?'weekend-text':'text-slate-500'}" 
+                                style="background:${background}; color:${colorEvs.length>0?'white':''}">
+                                ${cellDay}
+                            </div>`;
+                            currentDay = cellDay + 1;
+                        }
+                    }
+                    html += weekHtml + `</div>`;
+                }
+                container.innerHTML += html + `</div>`;
+            }
+        }
+
+        // --- FUNCIONES SISTEMA ---
+        function openSync() {
+            document.getElementById('modal-title').innerText = "Copia de Seguridad";
+            document.getElementById('modal-text').value = btoa(JSON.stringify(calendarData));
+            document.getElementById('btn-import').classList.remove('hidden');
+            document.getElementById('modal-box').style.display = 'flex';
+        }
+
+        function generateWorkReport() {
+            const months = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+            let report = "SOLICITUD VACACIONES - JUANAN\n\n";
+            let data = {};
+            Object.keys(calendarData.events).sort().forEach(id => {
+                if (calendarData.events[id].includes('workVacations')) {
+                    const [y, m, d] = id.split('-');
+                    const key = `${months[m]} ${y}`;
+                    if (!data[key]) data[key] = [];
+                    data[key].push(d);
+                }
+            });
+            for (const k in data) report += `* ${k}: Días ${data[k].join(', ')}\n`;
+            document.getElementById('modal-title').innerText = "Informe RRHH";
+            document.getElementById('modal-text').value = report;
+            document.getElementById('btn-import').classList.add('hidden');
+            document.getElementById('modal-box').style.display = 'flex';
+        }
+
+        function applySync() {
+            try { calendarData = JSON.parse(atob(document.getElementById('modal-text').value)); save(); closeModal(); } catch(e) { alert("Error de formato"); }
+        }
+
+        function copyModalText() { document.getElementById('modal-text').select(); document.execCommand('copy'); alert('Copiado'); }
+        function closeModal() { document.getElementById('modal-box').style.display = 'none'; }
+        
+        // --- MOTOR ICS ---
+        document.getElementById('ics-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const lines = e.target.result.split(/\r?\n/);
+                let start = null;
+                lines.forEach(line => {
+                    if (line.startsWith('DTSTART')) {
+                        const m = line.match(/:(\d{4})(\d{2})(\d{2})/);
+                        if (m) start = new Date(m[1], m[2]-1, m[3]);
+                    }
+                    if (line.startsWith('DTEND') && start) {
+                        const m = line.match(/:(\d{4})(\d{2})(\d{2})/);
+                        if (m) {
+                            let end = new Date(m[1], m[2]-1, m[3]);
+                            while(start < end) {
+                                const id = `${start.getFullYear()}-${start.getMonth()}-${start.getDate()}`;
+                                if (!calendarData.events[id]) calendarData.events[id] = [];
+                                if (!calendarData.events[id].includes('martinLuca')) calendarData.events[id].push('martinLuca');
+                                start.setDate(start.getDate() + 1);
+                            }
+                        }
+                        start = null;
+                    }
+                });
+                save();
+            };
+            reader.readAsText(file);
+        });
+
+        updateStats(); render();
+    </script>
+</body>
+</html>
